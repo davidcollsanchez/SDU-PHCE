@@ -51,7 +51,7 @@ environment works from source code all the way to running firmware on the Pico W
 - [x] Project builds without errors
 - [x] Program flashed to the Pico W
 - [x] The LED is blinking
-- [ ] Serial Monitor output is visible
+- [x] Serial Monitor output is visible
 
 **If the build or flash failed, what was the error and what fixed it?**
 
@@ -61,6 +61,8 @@ environment works from source code all the way to running firmware on the Pico W
 > - Flash 2: *"RP2040 device ... appears to be in BOOTSEL mode, but picotool was unable to connect. You may need to install a driver via Zadig"*. Windows has no driver for the BOOTSEL interface picotool uses. Workaround: drag-and-drop `build/blink.uf2` onto the **RPI-RP2** USB drive (BOOTSEL mass storage). Permanent fix: install the WinUSB driver with Zadig.
 > - With both the Pico and the Debug Probe plugged in, the laptop screen went black once; unplugging fixed it -> check the probe wiring (only GP0, GP1, GND) before connecting it again.
 > - `stdio_init_all()` must be the first line of `main()`, otherwise `printf` prints nothing.
+> - Serial Monitor: no output at first because only the Debug Probe was plugged in. The probe does **not** power the Pico, so both USB cables are needed
+>   (Pico W + probe). Then COM7 (Debug Probe, 115200 baud) showed the `printf` output, e.g. `--- sending: help! ---`, `h  ....`, `e  .`.
 
 ---
 
