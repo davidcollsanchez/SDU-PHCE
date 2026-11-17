@@ -109,43 +109,53 @@ C++ features buy you: `#define` → `constexpr`, `enum` → `enum class`, type s
 
 | Version | `text` | `data` | `bss` | Total Flash (`text`+`data`) | Total RAM (`data`+`bss`) |
 |---|---|---|---|---|---|
-| `c_versions` (C11) | | | | | |
-| `cpp_versions` (C++17) | | | | | |
+| `c_versions` (C11) | 12432 | 0 | 1184 | 12432 | 1184 |
+| `cpp_versions` (C++17) | 12436 | 0 | 1184 | 12436 | 1184 |
 
 ### Checklist
 
-- [ ] `c_versions` project created (C, **Console over UART**, no wireless option) and builds
-- [ ] `c_versions` runs and the PicoBricks LED blinks
-- [ ] `cpp_versions` project created with the same options and **Generate C++ code** ticked
-- [ ] `gpio_put(..., LedState::On)` tried without a cast, and the compile error read
-- [ ] The program is rewritten in C++17 (with the cast) and behaves identically
-- [ ] The `CMAKE_C_STANDARD` / `CMAKE_CXX_STANDARD` lines found in both `CMakeLists.txt`
-- [ ] `arm-none-eabi-gcc` and `arm-none-eabi-g++` found in the toolchain folder
-- [ ] Sizes table above filled in with `arm-none-eabi-size`
+- [x] `c_versions` project created (C, **Console over UART**, no wireless option) and builds
+- [x] `c_versions` runs and the PicoBricks LED blinks
+- [x] `cpp_versions` project created with the same options and **Generate C++ code** ticked
+- [x] `gpio_put(..., LedState::On)` tried without a cast, and the compile error read
+- [x] The program is rewritten in C++17 (with the cast) and behaves identically
+- [x] The `CMAKE_C_STANDARD` / `CMAKE_CXX_STANDARD` lines found in both `CMakeLists.txt`
+- [x] `arm-none-eabi-gcc` and `arm-none-eabi-g++` found in the toolchain folder
+- [x] Sizes table above filled in with `arm-none-eabi-size`
 
 **The compiler runs on your Windows/Linux PC. What CPU architecture will the produced
 instructions run on? What does the `arm-none-eabi` part of the compiler's name tell you?
 Why can the `.elf` file produced on your laptop not simply be executed by Windows?**
 
 > _Answer:_
->
+> - The instructions run on the RP2040's **ARM Cortex-M0+** CPU (32-bit ARMv6-M, Thumb instruction set), not on the x86-64 CPU of my laptop. Compiling on one platform (host) for another (target) is **cross-compilation**.
+> - `arm-none-eabi`: **arm** = target CPU architecture, **none** = no operating system (bare metal, the program talks directly to the hardware), **eabi** = *Embedded Application Binary Interface*, the calling convention / data layout used for embedded ARM code.
+> - Windows cannot run the `.elf` because: (1) it contains ARM Thumb machine code, which an x86-64 CPU cannot execute; (2) it is an ELF file, not a Windows PE `.exe`; (3) it is linked for the RP2040 memory map (code at `0x10000000` Flash, data at `0x20000000` SRAM) and writes directly to RP2040 hardware registers (e.g. SIO at `0xD0000000`), with no OS underneath. It has to be flashed to the Pico (`.uf2` drag-and-drop or SWD).
 
 **Why did `enum class` require an explicit conversion where the C `enum` did not? What
 went wrong when you passed `LedState::On` to `gpio_put()` without a cast?**
 
 > _Answer:_
->
+> - In C an `enum` is just a set of names for integers: `LED_ON` **is** the `int` 1. C converts integers to `bool` implicitly (0 = false, non-zero = true), so `gpio_put(pin, LED_ON)` compiled silently as `gpio_put(pin, 1)`.
+> - `enum class LedState : bool` is its **own type**, not a number, and it never converts implicitly. Passing `LedState::On` to `gpio_put(uint gpio, bool value)` failed with:
+>   `error: cannot convert 'LedState' to 'bool'` (note: *initializing argument 2 of 'void gpio_put(uint, bool)'*).
+> - This protects against mistakes that C accepts without a warning, e.g. passing a value of an unrelated enum (`gpio_put(pin, GREEN)`) or swapping arguments (`gpio_put(LED_ON, pin)` would switch GPIO 1 instead of GPIO 7). They become compile-time errors instead of bugs on the board.
+> - Fix: an explicit cast `gpio_put(b->pin, static_cast<bool>(LedState::On));`. The `: bool` underlying type makes `On`/`Off` real `true`/`false`, so the cast generates **no code**. Also `#define LED_PIN 7` -> `constexpr uint led_pin = 7;` (typed, scoped, visible to the debugger, still a compile-time constant).
 
 **Compare the `text`, `data` and `bss` sizes of your C and C++ versions. Did the C++
 abstractions used here introduce a measurable runtime or memory cost?**
 
 > _Answer:_
->
+> - C11: text 12432, data 0, bss 1184. C++17: text 12436, data 0, bss 1184 (measured with `size` on both `.elf` files).
+> - The only difference is **4 bytes**, and `size -A` shows where: `.text` (the code) is **7300 bytes in both**; only `.rodata` grew from 352 to 356 bytes because the start message `"C++17 blinker started"` is 2 characters longer than `"C11 blinker started"` (rounded up to 4 by alignment).
+> - So `constexpr`, `enum class` and `static_cast` added **no measurable memory or runtime cost**. That is the C++ **zero-overhead principle**: you don't pay for what you don't use, and what you use is as efficient as hand-written C.
+> - (Note: `data` = 0 because the SDK's `.data` section also contains RAM-resident code and is marked executable, so `size` counts it as text; `text` also includes the RAM reservations `.heap`/`.stack_dummy`. Real Flash content is about 8.3 KB.)
 
 **Attached file(s):**
 
-> _Filename:_
+> _Filename:_ `c_versions/c_versions.c`, `cpp_versions/cpp_versions.cpp` (each with its `CMakeLists.txt`, in this folder)
 >
+> `cpp_versions.cpp` is the C++17 rewrite (`constexpr`, `enum class LedState : bool`, `static_cast<bool>`). It also contains `waste_time()` and its `CMakeLists.txt` the `target_compile_options(... -O2)` line from Exercise 2.
 
 ---
 
@@ -200,46 +210,61 @@ levels trade size against speed, and what happens to your functions in the machi
 
 | Flag | `text` | `data` | `bss` | Total Flash (`text`+`data`) | Total RAM (`data`+`bss`) |
 |---|---|---|---|---|---|
-| `-O0` | | | | | |
-| `-O2` | | | | | |
-| `-Os` | | | | | |
+| `-O0` | 21568 | 0 | 1184 | 21568 | 1184 |
+| `-O2` | 11956 | 0 | 1184 | 11956 | 1184 |
+| `-Os` | 11376 | 0 | 1180 | 11376 | 1180 |
 
 ### Checklist
 
-- [ ] Project builds with `-O0`, `-O2` and `-Os`, table above filled in
-- [ ] `waste_time()` added, and the difference between `-O0` and `-O2` observed
-- [ ] `blink_once` found in the `.dis` file (and its fate at `-O2` determined)
-- [ ] One changed source statement identified and explained
-- [ ] (bonus) `c++filt` demangled the symbol
+- [x] Project builds with `-O0`, `-O2` and `-Os`, table above filled in
+- [x] `waste_time()` added, and the difference between `-O0` and `-O2` observed
+- [x] `blink_once` found in the `.dis` file (and its fate at `-O2` determined)
+- [x] One changed source statement identified and explained
+- [x] (bonus) `c++filt` demangled the symbol
 
 **Why is the size of the `.elf` file on disk not the same thing as the amount of Flash
 used by the program?**
 
 > _Answer:_
->
+> - The `.elf` file on disk contains much more than what is programmed into Flash: **debug information** (`.debug_info`, `.debug_line`, `.debug_loclists`, `.debug_str`, ... about 350 KB here), the symbol table, string tables and section/program headers. These are only used on the PC by GDB and tools like `objdump`; they are never sent to the Pico.
+> - Only the allocated sections (`.boot2`, `.text`, `.rodata`, `.binary_info`, and the Flash copy of `.data`) end up in Flash.
+> - Example: `cpp_versions.elf` was ~377 KB on disk while the program uses ~12 KB of Flash. The `-O0` build even had a *smaller* `.elf` file (234 KB) than the `-O2` build (323 KB) although its code was almost twice as big, because the amount of debug info changes with the optimization level.
 
 **Why was the compiler allowed to remove the entire `waste_time()` loop? Why is a
 software delay loop therefore a bad way to create timing in an embedded program, and
 why does `sleep_ms()` not disappear in the same way?**
 
 > _Answer:_
->
+> - Observed: with `-O0` the LED-on phase became visibly longer (I raised the loop to 10,000,000 iterations, ~1 s extra; with 1,000,000 it was only ~0.1 s at 125 MHz and hard to see). With `-O2` on/off were equal again and `waste_time` does not exist in the `.dis` file at all.
+> - The compiler may transform code freely as long as the **observable behaviour** stays the same (the *as-if rule*). The loop has no observable effect: `i` is a local that is never used afterwards, the body is empty, there is no I/O, no `volatile`, and execution time is not observable behaviour in C/C++. So `-O2` removed it (**dead code elimination**). At `-O0` it kept every load/store of `i` on the stack.
+> - A software delay loop is therefore bad timing: its duration depends on the optimization level, compiler version, CPU clock frequency and instruction timing, and it busy-waits (wastes CPU time and energy). (Declaring `volatile uint32_t i` would keep it, but the timing would still depend on clock and compiler.)
+> - `sleep_ms()` does not disappear because it reads the **hardware timer** through `volatile` memory-mapped registers (and is an SDK function with side effects), which the compiler must keep. Its timing comes from a real 1 MHz hardware counter, so it is the same at any optimization level or clock speed.
 
 **What happened to `blink_once()` between `-O0` and `-O2`?**
 
 > _Answer:_
->
+> - At `-O0`: `blink_once` is a separate function (symbol `_ZL10blink_onceP7blinker` at `0x1000037c`); `main` calls it with `bl` in the `while(true)` loop, and it loads `b->pin` / `b->delay_ms` through the pointer from the stack and calls `gpio_put`, `waste_time` and `sleep_ms`.
+> - At `-O2`: the name `blink_once` does **not appear** in the `.dis` file anymore. It was **inlined** into `main` (together with `gpio_put`), so there is no call, no return and no stack frame. The whole program is 19 instructions inside `main`.
+> - Bonus: `arm-none-eabi-c++filt _Z10blink_onceP7blinker` -> `blink_once(blinker*)`. The mangled name encodes the parameter types (`P7blinker` = pointer to `blinker`), which is what makes function overloading work in C++ (`L` = internal linkage because the function is `static`).
 
 **Why can optimized firmware contain fewer instructions even though the C++ source code
 is exactly the same?**
 
 > _Answer:_
->
+> Changed statement: `gpio_put(b->pin, static_cast<bool>(LedState::On));`
+> - `-O0`: `ldr r3,[r7,#4]` (load `b`) / `ldr r3,[r3,#0]` (load `b->pin`) / `movs r1,#1` / `movs r0,r3` / `bl gpio_put`, and `gpio_put` itself is ~30 instructions (computes `1<<pin`, tests the value, calls `gpio_set_mask`).
+> - `-O2`: **one instruction**, `str r5, [r4, #20]`: write 128 (= `1<<7`) to `0xD0000014` (SIO `GPIO_OUT_SET`). LED off is `str r6, [r4, #24]` to `GPIO_OUT_CLR`.
+> The source is the same, but the optimizer:
+> - **inlines** small functions (`blink_once`, `gpio_put`) -> no call/return/stack frame;
+> - does **constant propagation / folding**: `pin = 7`, `delay_ms = 250`, `1<<7 = 128` are known at compile time, so the `struct blinker b` and the pointer disappear and the constants are written straight into the instructions;
+> - removes branches whose result is known (`if (value)` in `gpio_put`) and **dead code** (`waste_time`);
+> - keeps values in **registers** instead of storing and reloading them from the stack after every statement (as `-O0` does).
 
 **What is `-Os` optimizing for, compared to `-O2`?**
 
 > _Answer:_
->
+> - `-Os` optimizes for **code size** (Flash usage) instead of speed. It enables the `-O2` optimizations except the ones that usually make code bigger (aggressive inlining, loop unrolling, function/loop alignment padding) and prefers shorter instruction sequences.
+> - Measured: `-Os` text = 11376 vs `-O2` 11956 (about 5 % smaller; `-O0` = 21568). It can be slightly slower than `-O2`. Useful on microcontrollers where Flash is the limiting resource.
 
 ---
 
@@ -377,42 +402,53 @@ Flash vs. RAM, and what optimization does to your debugging experience.
 
 ### Checklist
 
-- [ ] `temp_blink` project created (C++, **Console over UART**)
-- [ ] All 4 TODOs filled in by hand. Program runs: temperature printed, LED blinks, finger test works
-- [ ] Debug session starts and stops at `main`
-- [ ] Breakpoint on the `printf` line hit; `raw` and `temp_c` watched while stepping
-- [ ] `&temp_c` dumped and decoded in the MEMORY pane (or skipped if behind schedule)
-- [ ] Flash run: address of `main()` in `0x1000xxxx` recorded
-- [ ] RAM run (`no_flash`): address of `main()` in `0x2000xxxx` recorded, `BUILD:` printf added, power-cycle behavior explained
-- [ ] `-O2` build debugged: at least one concrete difference noted
+- [x] `temp_blink` project created (C++, **Console over UART**)
+- [x] All 4 TODOs filled in by hand. Program runs: temperature printed, LED blinks, finger test works
+- [x] Debug session starts and stops at `main`
+- [x] Breakpoint on the `printf` line hit; `raw` and `temp_c` watched while stepping
+- [x] `&temp_c` dumped and decoded in the MEMORY pane (or skipped if behind schedule)
+- [x] Flash run: address of `main()` in `0x1000xxxx` recorded
+- [x] RAM run (`no_flash`): address of `main()` in `0x2000xxxx` recorded, `BUILD:` printf added, power-cycle behavior explained
+- [x] `-O2` build debugged: at least one concrete difference noted
 
 **What were the values of `raw` and `temp_c` before and after warming the RP2040 with
 your finger?**
 
 > _Answer:_
->
+> - Before (resting): `raw` ≈ 889, `temp_c` ≈ 21.1 °C (resting readings varied between raw 884–890 = 20.6–23.4 °C).
+> - After warming the RP2040 with a finger: `raw` = 881, `temp_c` = 24.8 °C (peak). In the debugger one sample showed `raw = 885`, `voltage = 0.713 V`, `temp_c = 22.925`, `delay_ms = 853`.
+> - `raw` goes **down** when the temperature goes **up**: the sensor voltage drops by ~1.721 mV per °C (`temp = 27 - (V - 0.706)/0.001721`). One ADC step is 3.3 V/4096 = 0.8 mV ≈ 0.47 °C, so the ±3-count noise gives ±1.5 °C jitter; averaging several readings would help. Hotter -> smaller `delay_ms` -> faster blinking.
 
 **What address did you observe for `main()` when executing from Flash, and what address
 when executing from SRAM? What do the `0x1000....` and `0x2000....` address ranges tell
 you?**
 
 > _Answer:_
->
+> - Executing from Flash: `main()` starts at **`0x10000438`** (call stack at the `printf` breakpoint: `main@0x10000504`).
+> - Executing from SRAM (`no_flash` build): `main()` starts at **`0x2000038c`** (call stack: `main@0x20000458`).
+> - `0x1000_0000...` is the **XIP Flash** region: the external 2 MB QSPI Flash, mapped so the CPU can execute code directly from it (execute-in-place). Non-volatile.
+> - `0x2000_0000...` is the on-chip **SRAM** (264 KB, up to `0x20042000`). Volatile. Variables live here too: `print &temp_c` gave `0x20041fdc` (on the core 0 stack, at the top of SRAM in Scratch Y). The MEMORY pane showed `d1 66 b7 41` -> little-endian IEEE-754 `0x41B766D1` = 22.925 °C, matching the Watch panel; the next 4 bytes `00 88 36 3f` = 0.713 = `voltage`.
 
 **Power-cycle the board after the `no_flash` build. Which `BUILD:` line did the Serial
 Monitor print, and why? Why does a RAM-loaded program disappear while the Flash version
 remains? (And why would you ever want to run from RAM?)**
 
 > _Answer:_
->
+> - After unplugging and re-plugging the Pico, the Serial Monitor printed **`BUILD: FLASH`**.
+> - The `no_flash` program was only copied into **SRAM** by the debugger over SWD. SRAM is volatile, so it is lost when power is removed. At power-on the boot ROM boots from **Flash**, which still contained the last program written to it (the `BUILD: FLASH` version flashed by the debugger earlier). Flash is non-volatile, so that version remains.
+> - Why run from RAM: faster instruction fetch with no XIP/QSPI or cache-miss delays and more deterministic timing (time-critical code / ISRs), quick load-and-debug cycles without wearing out the Flash (limited erase cycles), and code that erases/programs the Flash itself cannot run from Flash at the same time.
 
 **What difference did you notice when debugging the optimized (`-O2`) build compared to
 the unoptimized one?**
 
 > _Answer:_
->
+> - The first stop in `main` moved from line 7 (`constexpr uint led_pin = 7;`) to line 9 (`stdio_init_all();`): the `constexpr` line generates no instructions at `-O2`, so there is nothing to stop on.
+> - `led_pin` disappeared from the Locals (it was folded into the constant 7).
+> - At the `printf` breakpoint, `raw` showed **`<optimized out>`** in Locals and in Watch: after computing `voltage` the compiler no longer needs `raw`, so its register was reused. At `-O0` every local has a stack slot for its whole lifetime.
+> - `main` is also much smaller (starts at `0x10000280` instead of `0x10000438`). Optimized code behaves the same but is harder to debug (lines skipped, variables missing, stepping jumps) -> debug with `-O0`/`-Og`, release with `-O2`/`-Os`. Before debugging I also had to switch the build type from **Release** (`-O3 -DNDEBUG`) to **Debug** (Pico sidebar -> *Switch Build Type*; *Clean CMake* resets it to Release, so switch after cleaning).
 
 **Attached file(s):**
 
-> _Filename:_
+> _Filename:_ `temp_blink/temp_blink.cpp` and `temp_blink/CMakeLists.txt` (in this folder)
 >
+> TODOs: `stdio_init_all()`; `gpio_init(led_pin)` + `gpio_set_dir(led_pin, GPIO_OUT)` with `constexpr uint led_pin = 7`; `printf("temp = %.1f C  (raw = %u)\n", temp_c, raw)`; on / `sleep_ms(delay_ms)` / off / `sleep_ms(delay_ms)`. `CMakeLists.txt` links `hardware_adc` and has the final `-O2` from step 9 (the `-O0` and `no_flash` lines were used during steps 4–8).
