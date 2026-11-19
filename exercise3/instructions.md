@@ -96,18 +96,25 @@ it's a good real example of "need more values -> need more bits.")
 
    | Type | Predicted | Measured |
    |---|---|---|
-   | `char` | 1 | |
-   | `int` | | |
-   | `short` | | |
-   | `long` | | |
-   | `long long` | | |
-   | `unsigned int` | | |
-   | `bool` | | |
-   | `float` | | |
-   | `double` | | |
-   | `long double` | | |
-   | `char16_t` | | |
-   | `size_t` | | |
+   | `char` | 1 | 1 |
+   | `int` | 4 | 4 |
+   | `short` | 2 | 2 |
+   | `long` | 4 | 4 |
+   | `long long` | 8 | 8 |
+   | `unsigned int` | 4 | 4 |
+   | `bool` | 1 | 1 |
+   | `float` | 4 | 4 |
+   | `double` | 8 | 8 |
+   | `long double` | 8 | 8 |
+   | `char16_t` | 2 | 2 |
+   | `size_t` | 4 | 4 |
+
+   Reasoning: the Cortex-M0+ is a 32-bit CPU, so `int` gets its natural 32-bit size.
+   `long` only has to be >= 32 bits, which is already the natural size, so it equals `int`
+   here (it is 8 bytes on 64-bit Linux). `long double` only has to be at least as precise
+   as `double`, and the ARM compiler gives it nothing extra (it is 16 bytes on an x86 PC).
+   `bool` needs 1 bit but the smallest addressable unit is 1 byte. `size_t` matches
+   `unsigned int` on a 32-bit system.
 
 2. Still before touching the board: a fixed-width type, `uint8_t`, from `<cstdint>`
    (already included). The name decodes literally - `u` for unsigned (no negative
@@ -126,8 +133,8 @@ it's a good real example of "need more values -> need more bits.")
 
    | | Predicted | Measured |
    |---|---|---|
-   | `uint8_t` minimum | | |
-   | `uint8_t` maximum | | |
+   | `uint8_t` minimum | 0 | 0 |
+   | `uint8_t` maximum | 255 | 255 |
 
 3. Create a new Pico project `data_types` (C++, **Console over UART**), and copy in
    [`code/data_types.cpp`](code/data_types.cpp). Recall, `stdio_init_all()` and printing
@@ -147,27 +154,33 @@ it's a good real example of "need more values -> need more bits.")
 
 ### Checklist
 
-- [ ] Sizes guessed before building
-- [ ] `print_size()` written and called for every type in Part 1's table
-- [ ] `data_types` builds, runs, and the size table is filled in
-- [ ] `uint8_t` min/max predicted before building, then checked against the output
-- [ ] Output for `number = 256` recorded
+- [x] Sizes guessed before building
+- [x] `print_size()` written and called for every type in Part 1's table
+- [x] `data_types` builds, runs, and the size table is filled in
+- [x] `uint8_t` min/max predicted before building, then checked against the output
+- [x] Output for `number = 256` recorded
 
 **What was printed for `number = 256`, and why?**
 
 > _Answer:_
->
+> - It printed `number = 0`.
+> - `uint8_t` is exactly 8 bits, so it can only hold 0-255. 256 is `1 0000 0000` in binary and needs 9 bits; only the lowest 8 bits (`0000 0000`) are stored, so the value **wraps around modulo 2^8 = 256** -> 0 (257 would give 1, 300 would give 44).
+> - There is no runtime error. The compiler only gave a **warning** (`unsigned conversion from 'int' to 'uint8_t' changes value from '256' to '0'`), because the constant was visible at compile time; a value computed at runtime (e.g. `a + b`) would wrap silently. (Unsigned wrap-around is well-defined; signed overflow would be undefined behaviour.)
 
 **Why does `uint8_t` exist at all, if `int` can already hold every value it can? Give one
 situation where the exact size matters and a plain `int` would be the wrong choice.**
 
 > _Answer:_
->
+> - `int` only guarantees a *minimum* size (>= 16 bits), so its real size depends on the platform: 4 bytes on the Pico, but only 2 bytes on some 8-bit MCUs. `uint8_t` is **exactly** 8 bits on every platform.
+> - Example: data from a sensor over I2C/UART, where the protocol sends values as single bytes. Each value must be stored/sent as exactly 8 bits; an `int` would be the wrong size (4 bytes) and would differ between platforms. Same for an 8-bit hardware register field or a binary file/network format.
+> - It also saves memory: 1000 readings take 1 KB as `uint8_t` but 4 KB as `int`.
+> - Note: `uint8_t` is really an `unsigned char`, so `std::cout` prints it as a character; that is why the code uses `static_cast<int>(...)` to print it as a number.
 
 **Attached file(s):**
 
-> _Filename:_
+> _Filename:_ `data_types/data_types.cpp` (with its `CMakeLists.txt`, in this folder)
 >
+> The TODO is filled with one `print_size("<type>", sizeof(<type>));` call per row of the table.
 
 ---
 
@@ -274,13 +287,21 @@ off to save a little power on pins that are unused or carrying an analog signal 
 
    | SDK call | Matching line in `gpio_hal` | Matching line in `gpio_registers` | What does it do? |
    |---|---|---|---|
-   | `gpio_init(LED_PIN)` | | | |
-   | `gpio_set_dir(BUTTON_PIN, GPIO_IN)` | | | |
-   | `gpio_pull_down(BUTTON_PIN)` | | | |
-   | `gpio_set_dir(LED_PIN, GPIO_OUT)` | | | |
-   | `gpio_get(BUTTON_PIN)` | | | |
-   | `gpio_put(LED_PIN, true)` | | | |
-   | `gpio_put(LED_PIN, false)` | | | |
+   | `gpio_init(LED_PIN)` | `pads_bank0_hw->io[LED_PIN] &= ~PADS_BANK0_GPIO0_OD_BITS;` `io_bank0_hw->io[LED_PIN].ctrl = GPIO_FUNC_SIO;` `sio_hw->gpio_clr = 1u << LED_PIN;` | `reg(PADS_BANK0_BASE_ADDR + 0x04u + 4u * LED_PIN) &= ~(1u << 7);` `reg(IO_BANK0_BASE_ADDR + 0x04u + 8u * LED_PIN) = 5u;` `reg(SIO_BASE_ADDR + 0x018u) = 1u << LED_PIN;` | Lets the pad drive the pin (OD = 0), connects the pin to SIO (FUNCSEL = 5 = plain software GPIO) and starts with output = 0 |
+   | `gpio_set_dir(BUTTON_PIN, GPIO_IN)` | No explicit line: OE is 0 (= input) after reset. Related setup: `io_bank0_hw->io[BUTTON_PIN].ctrl = GPIO_FUNC_SIO;` and `pads_bank0_hw->io[BUTTON_PIN] \|= PADS_BANK0_GPIO0_IE_BITS;` | No explicit line (reset default). Related: `reg(IO_BANK0_BASE_ADDR + 0x04u + 8u * BUTTON_PIN) = 5u;` and `button_pad \|= 1u << 6;` | Pin stays an input (GPIO_OE bit 10 = 0, the reset value). IE = 1 switches on the input buffer so reads see the real pin level |
+   | `gpio_pull_down(BUTTON_PIN)` | `pads_bank0_hw->io[BUTTON_PIN] &= ~PADS_BANK0_GPIO0_PUE_BITS;` `pads_bank0_hw->io[BUTTON_PIN] \|= PADS_BANK0_GPIO0_PDE_BITS;` | `button_pad &= ~(1u << 3);` `button_pad \|= 1u << 2;` | Pull-up off (PUE = 0), pull-down on (PDE = 1): a released button reads a clean LOW instead of floating |
+   | `gpio_set_dir(LED_PIN, GPIO_OUT)` | `sio_hw->gpio_oe_set = 1u << LED_PIN;` | `reg(SIO_BASE_ADDR + 0x024u) = 1u << LED_PIN;` | Sets bit 7 of GPIO_OE through the SET alias: pin 7 becomes an output, other pins untouched |
+   | `gpio_get(BUTTON_PIN)` | `sio_hw->gpio_in & (1u << BUTTON_PIN)` | `reg(SIO_BASE_ADDR + 0x004u) & (1u << BUTTON_PIN)` | Reads GPIO_IN (all pin levels) and tests bit 10: true if the button is pressed |
+   | `gpio_put(LED_PIN, true)` | `sio_hw->gpio_set = 1u << LED_PIN;` | `reg(SIO_BASE_ADDR + 0x014u) = 1u << LED_PIN;` | GPIO_OUT_SET: LED pin high (on), other pins unchanged, no read-modify-write needed |
+   | `gpio_put(LED_PIN, false)` | `sio_hw->gpio_clr = 1u << LED_PIN;` | `reg(SIO_BASE_ADDR + 0x018u) = 1u << LED_PIN;` | GPIO_OUT_CLR: LED pin low (off), other pins unchanged |
+
+   Notes: under F12, `gpio_put()`/`gpio_get()`/`gpio_set_dir()` are `static inline`
+   functions that build a mask (`1ul << gpio`) and write `sio_hw->gpio_set/clr/oe_set` or
+   read `sio_hw->gpio_in`; `sio_hw` is `((sio_hw_t *)SIO_BASE)`, a struct whose fields sit
+   at the register offsets (`gpio_set` = `0xD0000014`), with `volatile` hidden in the
+   `io_rw_32` type. `gpio_init()` is a real (non-inline) function in `gpio.c`. Address
+   math: pad register of pin N = `0x4001C000 + 0x04 + 4*N` (LED: `0x4001C020`), control
+   register of pin N = `0x40014000 + 0x04 + 8*N` (LED: `0x4001403C`).
 7. Compare the compiled size of all three projects:
    `arm-none-eabi-size build/<project_name>.elf` (run from each project's folder, or use
    the memory usage summary already printed at the end of a normal build). Fill in the
@@ -288,34 +309,44 @@ off to save a little power on pins that are unused or carrying an analog signal 
 
    | Project | `text` size (bytes) |
    |---|---|
-   | `gpio_sdk` | |
-   | `gpio_hal` | |
-   | `gpio_registers` | |
+   | `gpio_sdk` | 10676 |
+   | `gpio_hal` | 10604 |
+   | `gpio_registers` | 10644 |
+
+   (`data` = 0 and `bss` = 1164 in all three.)
 
 ### Checklist
 
-- [ ] `gpio_sdk` builds and runs; button press lights the LED
-- [ ] `gpio_hal` builds and runs with identical behavior
-- [ ] `gpio_registers` builds and runs with identical behavior
-- [ ] SDK-to-HAL-to-register table filled in
-- [ ] Compiled `text` size compared across all three
+- [x] `gpio_sdk` builds and runs; button press lights the LED
+- [x] `gpio_hal` builds and runs with identical behavior
+- [x] `gpio_registers` builds and runs with identical behavior
+- [x] SDK-to-HAL-to-register table filled in
+- [x] Compiled `text` size compared across all three
 
 **The button is configured with a pull-down resistor. What logic level does the input read when the button is released and when it is pressed? How would this change if a pull-up resistor were used instead?**
 
 > _Answer:_
->
+> - With the pull-down: **released = LOW (0)**, because the pin is weakly pulled to 0 V through the internal resistor; **pressed = HIGH (1)**, because the button connects the pin directly to 3.3 V, which overpowers the weak pull-down.
+> - With a pull-up the pin is weakly held at 3.3 V, so released = HIGH. The button would then have to connect the pin to GND, so pressed = LOW: the logic is inverted ("active-low").
+> - On this board the button connects to 3.3 V, so with a pull-up the pin would read HIGH both when released and when pressed, and presses could not be detected.
 
 **Did the three projects' compiled sizes actually match how different the source code
 looks, or were they closer/further apart than you expected? Why might that be?**
 
 > _Answer:_
->
+> - Much closer than the source suggests: 10604 / 10644 / 10676 bytes, at most 72 bytes (< 1 %) apart.
+> - All three end up as the same register writes: the SDK's `gpio_put`/`gpio_get`/`gpio_set_dir` are `static inline` functions that compile down to `sio_hw->...` accesses, and `sio_hw->gpio_set` is just a named struct field at address `0xD0000014`, the same address `reg(SIO_BASE_ADDR + 0x014u)` writes.
+> - Most of `text` is shared SDK code (boot, startup, clock setup, the timer behind `sleep_ms()`), so the GPIO code is only a tiny part of it.
+> - `gpio_sdk` is slightly bigger because `gpio_init()` is a real, non-inline function in the SDK (`gpio.c`, with `gpio_set_function()`) that also does a few extra safety writes. `gpio_registers` is slightly bigger than `gpio_hal`, probably because each full 32-bit address is loaded as a separate constant instead of one base pointer + small offsets.
+> - So the abstraction is practically **zero-overhead**.
 
 **When would you reach for direct register access instead of the SDK, and when is the
 SDK clearly the better choice? Where would the HAL level (`gpio_hal.cpp`) fit in?**
 
 > _Answer:_
->
+> - **Direct registers:** when timing/speed is critical, when you need a hardware feature the SDK doesn't expose, or to understand and debug what the SDK actually does. Downsides: magic numbers, a wrong address or bit fails *silently* (no compiler error, it just touches the wrong register), and the code is not portable.
+> - **SDK:** almost always. It is readable, safe, portable and, as the sizes show, costs about the same.
+> - **HAL structs** (`sio_hw->gpio_set`, the "MCAL" level from the lecture) sit in between: direct register control without magic addresses, e.g. setting/clearing several pins in one write (`sio_hw->gpio_set = mask;`) in performance-critical code while staying readable.
 
 **`gpio_registers.cpp`/`gpio_hal.cpp` clear the `PUE` bit and set the `PDE` bit for the
 button pin (pull-down). What third combination of those two bits is possible, and what
@@ -323,11 +354,11 @@ would it mean electrically for a button input if neither pull-up nor pull-down w
 enabled?**
 
 > _Answer:_
->
+> - PUE = 1, PDE = 0 is a pull-up. With **both 0** there is no pull resistor at all: when the button is released, GPIO 10 is connected to nothing, so it **floats**. It has no defined voltage, picks up electrical noise and reads HIGH or LOW at random, so the LED would flicker or turn on without a press.
+> - (Both = 1 is the RP2040's "bus keeper" mode, which weakly holds the last driven level.)
 
 **Attached file(s):**
 
-> _Filename:_
->
+> _Filename:_ `gpio_sdk/gpio_sdk.cpp`, `gpio_hal/gpio_hal.cpp`, `gpio_registers/gpio_registers.cpp` (each with its `CMakeLists.txt`, in this folder)
 
 Exercises 3 and 4 continue in [`homework.md`](homework.md).
